@@ -1,0 +1,76 @@
+pipelin {
+    agent any
+tools {
+    maven 'mymaven'
+}
+    stages {
+        stage('code') {
+            steps {
+                git branch: 'main', url: 'https://github.com/sumerasulthana/docker-webapp-k8s.git'
+            }
+        }
+        stage ('BUILD') {
+            steps {
+                sh "mvn clean install"
+            }
+        }
+      stage("CQA") {
+            steps {
+                      withSonarQubeEnv('mysonar') {
+                         sh '''
+                          mvn clean verify \
+                          org.sonarsource.scanner.maven:sonar-maven-plugin:sonar \
+                         -Dsonar.projectKey=MyProject \
+                         -Dsonar.host.url=http://18.225.218.16:9000 \
+                         -Dsonar.login=sqa_cc15964fa3a8c42dda7d3b82f5ae88380b153217
+'''
+
+                 }
+            }
+      }
+      stage ('QualityGates') {
+          steps {
+              waitForQualityGate abortPipeline: true, credentialsId: 'sonar-cred'
+          }
+      }
+      stage ('NexusArtifacts') {
+          steps {
+          nexusArtifactUploader artifacts: [[artifactId: 'vprofile', classifier: '', file: 'target/vprofile-v2.war', type: 'war']], credentialsId: 'nexus', groupId: 'com.visualpathit', nexusUrl: '18.227.140.255:8081', nexusVersion: 'nexus3', protocol: 'http', repository: 'myrepo', version: 'v2'
+          }
+      }
+    stage ('images') {
+        steps {
+            sh 'docker build -t appimage .'
+            sh 'docker build -t dbimage Docker-db'
+        }
+    }
+    stage ('trivy') {
+        steps {
+            sh 'trivy image appimage >> app-image.txt'
+            sh 'trivy image dbimage >> db-image.txt'
+        }
+    }
+    
+    stage ('Registry') {
+        steps {
+            script {
+                withDockerRegistry(credentialsId: 'dockerhub') {
+                    sh 'docker tag appimage sumerasulthana/k8s-king:app'
+                    sh 'docker tag dbimage sumerasulthana/k8s-king:db'
+                    sh 'docker push sumerasulthana/k8s-king:app'
+                    sh 'docker push sumerasulthana/k8s-king:db'
+                    
+}
+            }
+        }
+    }
+        stage ('compose') {
+            steps {
+                sh 'docker-compose build'
+                sh 'docker-compose up -d'
+                sleep 20
+                sh 'docker ps'
+            }
+        }
+    }
+}
