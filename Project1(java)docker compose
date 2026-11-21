@@ -1,0 +1,55 @@
+pipeline {
+    agent any
+tools{
+    maven "mymaven"
+}
+    stages {
+        stage("CODE") {
+            steps {
+              git credentialsId: 'git', url: 'https://github.com/sumerasulthana/dockerwebapp.git'
+            }
+        }
+        stage("BUILD"){
+            steps{
+            sh "mvn clean install"    
+            }
+        }
+       stage("CQA") {
+            steps {
+                      withSonarQubeEnv('mysonar') {
+                         sh '''
+                          mvn clean verify \
+                          org.sonarsource.scanner.maven:sonar-maven-plugin:sonar \
+                         -Dsonar.projectKey=sonar \
+                         -Dsonar.host.url=http://18.222.199.238:9000 \
+                         -Dsonar.login=sqp_df3580dba9e5c7af96f1c990451714b2b2a6bc78
+'''
+
+                 }
+            }
+        } 
+        stage("artifact"){
+            steps{
+nexusArtifactUploader artifacts: [[artifactId: 'vprofile', classifier: '', file: 'target/vprofile-v2.war', type: 'war']], credentialsId: 'nexus', groupId: 'com.visualpathit', nexusUrl: '3.138.191.19:8081/', nexusVersion: 'nexus3', protocol: 'http', repository: 'myrepo', version: 'v2'            }
+        }
+        stage("IMAGE"){
+            steps{
+            sh "docker build -t appimage Docker-app"    
+            sh "docker build -t dbimage Docker-db"
+            }
+        }
+        stage("Trivy") {
+            steps {
+              sh "trivy image appimage:latest"
+              sh "trivy image dbimage:latest"
+            }
+        }
+          stage("Compose"){
+            steps{
+            sh "docker-compose down"    
+            sh "docker-compose up -d"
+
+            }
+        }
+    }
+}
