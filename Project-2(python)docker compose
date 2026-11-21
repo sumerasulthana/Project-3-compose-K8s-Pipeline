@@ -1,0 +1,143 @@
+pipeline {
+    agent{
+        node{
+            label 'prod'
+        }
+    }
+
+    stages {
+        stage('CODE') {
+            steps {
+                 git 'https://github.com/sumerasulthana/python-code-library-app.git'
+            }
+        }
+          stage('CQA') {
+    steps {
+        // 'SonarScanner' must match the Name you set in Global Tool Configuration
+        script {
+            def scannerHome = tool 'sonar-scanner'
+            withSonarQubeEnv('mysonar') {
+                // Use the full path to the scanner binary
+                sh "${scannerHome}/bin/sonar-scanner -Dsonar.projectKey=MyProject -Dsonar.sources=."
+            }
+        }
+    }
+}
+stage('QualityGates'){
+    steps{
+        waitForQualityGate abortPipeline: true, credentialsId: 'sonar'
+    }
+}
+stage('image'){
+            steps{
+                sh 'docker build -t auth-image auth'
+                sh 'docker build -t book-image book'
+                sh 'docker build -t borrow-image borrow'
+                sh 'docker build -t database-image database'
+                sh 'docker build -t frontend-image .'
+            }
+        }
+        stage('trivy-scan'){
+            steps{
+                sh 'trivy image auth-image >> auth-image-report.txt'
+                sh 'trivy image book-image >> book-image-report.txt'
+                sh 'trivy image borrow-image >> borrow-image-report.txt'
+                sh 'trivy image database-image >> database-image-report.txt'
+                sh 'trivy image frontend-image >> frontend-image-report.txt'
+                
+            }
+        }
+        stage('Registry'){
+            steps{
+                script{
+                    withDockerRegistry(credentialsId: 'dockerhub'){
+                       sh 'docker tag auth-image sumerasulthana/flm-oct:authapp'
+                        sh 'docker tag book-image sumerasulthana/flm-oct:bookapp'
+                         sh 'docker tag borrow-image sumerasulthana/flm-oct:borrowapp'
+                          sh 'docker tag database-image sumerasulthana/flm-oct:databaseapp'
+                           sh 'docker tag frontend-image sumerasulthana/flm-oct:frontendapp'
+                   } 
+
+                }
+            }
+        }
+        stage('Deploy'){
+            steps{
+                sh 'docker stack deploy libraryapp --compose-file=compose.yml'
+            }
+        }
+
+            }
+        }
+---------------------
+
+
+Option A: Reference the Tool Path via Jenkins (Recommended)
+This approach uses Jenkins' Global Tool Configuration, which manages the scanner installation for you. It is cleaner and more maintainable than hardcoding paths.
+
+
+
+-------------------
+
+
+---
+services:
+  db:
+    image: shaikmustafa/arshad:db
+    deploy:
+      replicas: 1
+    ports:
+      - "3306:3306"
+    networks:
+      - mynetwork
+
+  auth_service:
+    image: shaikmustafa/arshad:auth
+    deploy:
+      replicas: 1
+    ports:
+      - "5001:5001"
+    networks:
+      - mynetwork
+    depends_on:
+      - db
+    
+
+  book_service:
+    image: shaikmustafa/arshad:book
+    deploy:
+      replicas: 1
+    ports:
+      - "5002:5002"
+    networks:
+      - mynetwork
+    depends_on:
+      - db
+  borrow_service:
+    image: shaikmustafa/arshad:borrow
+    deploy:
+      replicas: 1
+    ports:
+
+      - "5003:5003"
+    networks:
+      - mynetwork
+    depends_on:
+      - db
+
+  frontend:
+    image: shaikmustafa/arshad:frontend
+    deploy:
+      replicas: 1
+    ports:
+      - "5000:5000"
+    networks:
+      - mynetwork
+    depends_on:
+      - auth_service
+      - book_service
+      - borrow_service
+
+networks:
+  mynetwork:
+    driver: overlay
